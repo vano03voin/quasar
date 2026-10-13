@@ -44,7 +44,7 @@ internal static class ClusterInputOwners
                 if (!retained.Contains(hash) && owners.Remove(cluster)) Write(path, owners);
                 if (owners.Count != 0) continue;
                 string input = Path.Combine(directory, hash);
-                if (Directory.Exists(input)) { ClusterWorldFiles.Private(input); Directory.Delete(input, true); }
+                if (Directory.Exists(input)) { ClusterWorldFiles.Private(input); ClusterContentStore.DeleteTree(input); }
                 File.Delete(path); // Empty owner receipt survives a crash during deletion.
             }
         }

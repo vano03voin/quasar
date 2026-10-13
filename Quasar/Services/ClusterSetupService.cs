@@ -233,7 +233,7 @@ public sealed class ClusterSetupService(ClusterCatalog catalog, ClusterHostCatal
     {
         foreach (string name in new[] { "installation.tar", "world.tar", "split-world.tar" }) File.Delete(Path.Combine(work, name));
         string installation = Path.Combine(work, "installation");
-        if (Directory.Exists(installation)) { ClusterWorldFiles.Private(installation); Directory.Delete(installation, true); }
+        if (Directory.Exists(installation)) { ClusterWorldFiles.Private(installation); ClusterContentStore.DeleteTree(installation); }
     }
     private static ClusterDefinition Target(ClusterDefinition cluster, EnrolledClusterHost host)
     { var copy = cluster.Clone(); copy.HostCommandUrl = host.CommandUrl; copy.HostCommandTokenEnvironmentVariable = host.CredentialReference; return copy; }

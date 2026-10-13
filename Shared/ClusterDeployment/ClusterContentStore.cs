@@ -7,7 +7,7 @@ namespace Quasar.ClusterDeployment;
 
 // Snapshots are manifests and hard-link references, never private copies of payloads.
 // Only immutable input trees may use this store. Mutable worlds/runtimes must copy.
-internal sealed class ClusterContentStore : IDisposable
+internal sealed partial class ClusterContentStore : IDisposable
 {
     // Set once by each service. Offline commands/tests use a store beside their inputs.
     internal static string? RootDirectory { get; set; }
@@ -19,15 +19,19 @@ internal sealed class ClusterContentStore : IDisposable
 
     internal static async Task<ClusterContentStore> OpenAsync(string snapshots, CancellationToken token)
     {
-        if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException("Cluster content storage requires Linux.");
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763))
+            throw new PlatformNotSupportedException("Cluster content storage requires Linux or Windows 10 1809 / Server 2019 or later with NTFS.");
         snapshots = Path.GetFullPath(snapshots);
+        RefuseLink(snapshots, allowMissing: true);
         Directory.CreateDirectory(snapshots);
         ClusterWorldFiles.Private(snapshots);
         string storage = RootDirectory ?? snapshots;
+        RefuseLink(storage, allowMissing: true);
         Directory.CreateDirectory(storage);
         // Hard links cannot cross devices. A separate volume owns its own objects.
         if (Device(storage) != Device(snapshots)) storage = snapshots;
         string root = Path.Combine(Path.GetFullPath(storage), ".objects");
+        RefuseLink(root, allowMissing: true);
         Directory.CreateDirectory(root);
         ClusterWorldFiles.Private(root);
         string lockFile = Path.Combine(root, ".lock");
@@ -55,18 +59,30 @@ internal sealed class ClusterContentStore : IDisposable
             {
                 File.Copy(source, temporary);
                 await VerifyAsync(temporary, pin, token);
-                File.SetUnixFileMode(temporary, UnixFileMode.UserRead | UnixFileMode.GroupRead | UnixFileMode.OtherRead
+                if (OperatingSystem.IsWindows()) File.SetAttributes(temporary, File.GetAttributes(temporary) | FileAttributes.ReadOnly);
+                else File.SetUnixFileMode(temporary, UnixFileMode.UserRead | UnixFileMode.GroupRead | UnixFileMode.OtherRead
                     | (pin.Executable ? UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute : 0));
                 File.Move(temporary, path);
                 verified.Add(key);
             }
-            finally { File.Delete(temporary); }
+            finally { DeleteFile(temporary); }
         }
-        else if (verified.Add(key)) await VerifyAsync(path, pin, token);
+        else
+        {
+            if (new FileInfo(path).Length != pin.Bytes)
+                throw new InvalidDataException("Content object does not match its verified pin.");
+            if (!verified.Contains(key))
+            {
+                await VerifyAsync(path, pin, token);
+                verified.Add(key);
+            }
+        }
         token.ThrowIfCancellationRequested();
+        RefuseLink(Path.GetDirectoryName(destination)!, allowMissing: true);
         Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
         ClusterWorldFiles.Private(Path.GetDirectoryName(destination)!);
-        if (Link(path, destination) != 0) throw new IOException("Cannot create content reference.", new Win32Exception(Marshal.GetLastPInvokeError()));
+        if (OperatingSystem.IsWindows()) WindowsLink(path, destination);
+        else if (Link(path, destination) != 0) throw new IOException("Cannot create content reference.", new Win32Exception(Marshal.GetLastPInvokeError()));
         ClusterStorageActivity.MarkChanged();
     }
 
@@ -79,9 +95,10 @@ internal sealed class ClusterContentStore : IDisposable
         try
         {
             await ReferenceAsync(path, temporary, pin, token);
-            File.Move(temporary, path, true);
+            if (OperatingSystem.IsWindows()) WindowsReplace(temporary, path);
+            else File.Move(temporary, path, true);
         }
-        finally { File.Delete(temporary); }
+        finally { DeleteFile(temporary); }
     }
 
     internal void Prune()
@@ -89,16 +106,17 @@ internal sealed class ClusterContentStore : IDisposable
         foreach (string path in Directory.EnumerateFiles(root))
         {
             string name = Path.GetFileName(path);
-            if (name.StartsWith(".write-", StringComparison.Ordinal)) { File.Delete(path); continue; }
+            if (name.StartsWith(".write-", StringComparison.Ordinal)) { DeleteFile(path); continue; }
             if (name.Length != 66 || name[64] != '-' || name[65] is not ('r' or 'x')
                 || !name[..64].All(Uri.IsHexDigit)) continue;
             RefuseLink(path);
-            if (ReferenceCount(path) == 1) File.Delete(path);
+            if (ReferenceCount(path) == 1) DeleteFile(path);
         }
     }
 
     internal static uint ReferenceCount(string path)
     {
+        if (OperatingSystem.IsWindows()) return WindowsInformation(path).Links;
         if (Statx(-100, path, 0x100, 4, out var data) != 0 || (data.Mask & 4) == 0)
             throw new IOException("Cannot inspect content references.", new Win32Exception(Marshal.GetLastPInvokeError()));
         return data.Links;
@@ -106,6 +124,7 @@ internal sealed class ClusterContentStore : IDisposable
 
     private static (uint Major, uint Minor) Device(string path)
     {
+        if (OperatingSystem.IsWindows()) return (WindowsInformation(path).VolumeSerial, 0);
         if (Statx(-100, path, 0x100, 0x7ff, out var data) != 0)
             throw new IOException("Cannot inspect content filesystem.", new Win32Exception(Marshal.GetLastPInvokeError()));
         return (data.DeviceMajor, data.DeviceMinor);
@@ -119,14 +138,62 @@ internal sealed class ClusterContentStore : IDisposable
             throw new InvalidDataException("Content object does not match its verified pin.");
     }
 
-    private static void RefuseLink(string path)
+    private static void RefuseLink(string path, bool allowMissing = false)
     {
         for (string? parent = Path.GetFullPath(path); parent is not null; parent = Path.GetDirectoryName(parent))
-            if ((File.GetAttributes(parent) & FileAttributes.ReparsePoint) != 0)
-                throw new InvalidDataException("Content storage must not contain symbolic links.");
+        {
+            try
+            {
+                if ((File.GetAttributes(parent) & FileAttributes.ReparsePoint) != 0)
+                    throw new InvalidDataException("Content storage must not contain symbolic links.");
+            }
+            catch (FileNotFoundException) when (allowMissing) { }
+            catch (DirectoryNotFoundException) when (allowMissing) { }
+        }
     }
 
     public void Dispose() { try { Prune(); } finally { gate.Dispose(); } }
+
+    // A Windows hard link shares the read-only attribute with every other name.
+    // Never clear that attribute to remove a snapshot or an unpublished reference.
+    internal static void DeleteFile(string path)
+    {
+        if (!OperatingSystem.IsWindows()) { File.Delete(path); return; }
+        try { _ = File.GetAttributes(path); }
+        catch (FileNotFoundException) { return; }
+        catch (DirectoryNotFoundException) { return; }
+        RefuseLink(path);
+        WindowsDelete(path);
+    }
+
+    internal static void DeleteTree(string path)
+    {
+        if (!OperatingSystem.IsWindows()) { Directory.Delete(path, true); return; }
+        path = Path.GetFullPath(path);
+        if (path == Path.GetPathRoot(path)) throw new InvalidDataException("Cannot remove a filesystem root.");
+        // Validate the whole tree before removing any name, without following junctions.
+        var directories = new List<string>();
+        var files = new List<string>();
+        var pending = new Stack<string>();
+        pending.Push(path);
+        while (pending.TryPop(out string? directory))
+        {
+            RefuseLink(directory);
+            directories.Add(directory);
+            foreach (string child in Directory.EnumerateFileSystemEntries(directory))
+            {
+                RefuseLink(child);
+                if (Directory.Exists(child)) pending.Push(child);
+                else files.Add(child);
+            }
+        }
+        foreach (string file in files) DeleteFile(file);
+        foreach (string directory in directories.AsEnumerable().Reverse())
+        {
+            RefuseLink(directory);
+            Directory.Delete(directory);
+        }
+    }
 
     [DllImport("libc", EntryPoint = "link", SetLastError = true)]
     private static extern int Link(string source, string destination);

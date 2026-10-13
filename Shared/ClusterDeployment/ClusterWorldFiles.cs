@@ -26,14 +26,20 @@ internal static class ClusterWorldFiles
                 string target = Path.Combine(staging, name);
                 Directory.CreateDirectory(Path.GetDirectoryName(target)!);
                 File.Copy(Path.Combine(source, name), target);
-                if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(target,
+                if (OperatingSystem.IsWindows())
+                {
+                    // File.Copy creates a new file but carries the source's read-only attribute.
+                    // Only this private copy may be made writable, never a content reference.
+                    File.SetAttributes(target, File.GetAttributes(target) & ~FileAttributes.ReadOnly);
+                }
+                else File.SetUnixFileMode(target,
                     File.GetUnixFileMode(target) | UnixFileMode.UserRead | UnixFileMode.UserWrite);
             }
             await VerifyAsync(staging, pins, token);
             await VerifyAsync(source, pins, token);
             Directory.Move(staging, destination);
         }
-        finally { if (Directory.Exists(staging)) Directory.Delete(staging, true); }
+        finally { if (Directory.Exists(staging)) ClusterContentStore.DeleteTree(staging); }
     }
 
     internal static async Task VerifyAsync(string root, Dictionary<string, DeploymentFile> pins, CancellationToken token)
@@ -122,7 +128,7 @@ internal static class ClusterWorldFiles
             await VerifyAsync(destination, pins, token);
             return destination;
         }
-        finally { if (Directory.Exists(staging)) Directory.Delete(staging, true); }
+        finally { if (Directory.Exists(staging)) ClusterContentStore.DeleteTree(staging); }
     }
 
     internal static async Task<Dictionary<string, DeploymentFile>> ReadPinsAsync(string directory, string hash, CancellationToken token)

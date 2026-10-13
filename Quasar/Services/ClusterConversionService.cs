@@ -338,7 +338,7 @@ public sealed class ClusterConversionService(ClusterCatalog clusters, DedicatedS
     internal static string[] FindSaveStores(IEnumerable<string> runtimes) => runtimes
         .Where(root => Directory.Exists(Path.Combine(root, "nodes")))
         .SelectMany(root => Directory.EnumerateDirectories(Path.Combine(root, "nodes")))
-        .SelectMany(node => new[] { Path.Combine(node, "data/cluster/saves"), Path.Combine(node, "data/saves") })
+        .SelectMany(node => new[] { Path.Combine(node, "data", "cluster", "saves"), Path.Combine(node, "data", "saves") })
         .Where(path => Directory.Exists(path) && (Directory.EnumerateDirectories(path, "P-*").Any()
             || Directory.Exists(Path.Combine(path, "GLOBAL"))))
         .Distinct(StringComparer.Ordinal).ToArray();

@@ -295,10 +295,34 @@ internal static class DeploymentSelfTest
             }
             DeploymentConfigurationReferences.Retain(state, "demo", [next], [first]);
             Assert(Directory.Exists(first) && Directory.Exists(next), "active configuration was not retained");
-            DeploymentConfigurationReferences.Retain(state, "demo", [next], []);
+            DeploymentConfigurationReferences.Retain(state, "demo", [OperatingSystem.IsWindows() ? next.ToUpperInvariant() : next], []);
             Assert(!Directory.Exists(first) && Directory.Exists(next), "unused configuration was not pruned");
             DeploymentConfigurationReferences.Retain(state, "demo", [], []);
             Assert(!Directory.Exists(next) && File.ReadAllText(Path.Combine(runtime, "world")) == "live world", "runtime was affected by configuration pruning");
+
+            // Native separators and case aliases must not bypass runtime protection or the managed root boundary.
+            Directory.CreateDirectory(first);
+            string nestedRuntime = Path.Combine(first, "runtime");
+            File.WriteAllBytes(Path.Combine(first, "bundle.json"), JsonSerializer.SerializeToUtf8Bytes(
+                new BundleManifest(1, "revision", [], [], RuntimeRoot: OperatingSystem.IsWindows() ? nestedRuntime.ToUpperInvariant() : nestedRuntime,
+                    ClusterId: "demo"), new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+            DeploymentConfigurationReferences.Track(state, "demo", first);
+            bool runtimeRejected = false;
+            try { DeploymentConfigurationReferences.Retain(state, "demo", [], []); }
+            catch (InvalidDataException) { runtimeRejected = true; }
+            Assert(runtimeRejected && Directory.Exists(first), "configuration containing runtime storage was pruned");
+
+            string outside = Path.GetFullPath(Path.Combine(state, "conversions-sibling/configuration"));
+            Directory.CreateDirectory(outside);
+            string referencePath = Path.Combine(state, "conversions/.configuration-references.json");
+            byte[] before = File.ReadAllBytes(referencePath);
+            DeploymentConfigurationReferences.Track(state, "demo", outside);
+            Assert(before.SequenceEqual(File.ReadAllBytes(referencePath)), "sibling prefix was tracked as managed storage");
+            File.WriteAllBytes(referencePath, JsonSerializer.SerializeToUtf8Bytes(new Dictionary<string, string[]> { ["demo"] = [outside] }));
+            bool escapeRejected = false;
+            try { DeploymentConfigurationReferences.Retain(state, "demo", [], []); }
+            catch (InvalidDataException) { escapeRejected = true; }
+            Assert(escapeRejected && Directory.Exists(outside), "configuration reference escaped the managed root");
         }
         finally { if (Directory.Exists(state)) Directory.Delete(state, true); }
     }
@@ -379,7 +403,7 @@ internal static class DeploymentSelfTest
             byte[] library = "steamclient"u8.ToArray();
             string hash = ExecutionBundle.Hash(library);
             var first = SteamClientLibrary.InstallAsync(home, hash, new MemoryStream(library), default).GetAwaiter().GetResult();
-            Assert(first.Installed && first.Path == Path.Combine(home, ".steam/sdk64/steamclient.so")
+            Assert(first.Installed && first.Path == Path.Combine(home, ".steam", "sdk64", "steamclient.so")
                 && File.ReadAllBytes(first.Path).SequenceEqual(library), "steamclient.so was not staged under ~/.steam/sdk64");
             var replay = SteamClientLibrary.InstallAsync(home, hash, new MemoryStream(library), default).GetAwaiter().GetResult();
             Assert(!replay.Installed, "identical steamclient.so was written again");

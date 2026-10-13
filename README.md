@@ -52,6 +52,7 @@ raw plugin settings remain restricted. See [RBAC enforcement](Docs/Configuration
 | [Cluster Content Updates Plan](https://git.cometworks.se/CometWorks/clustering-plan/src/branch/main/Plan/ClusterContentUpdatesPlan.md) | Proposed Workshop byte pinning, scheduled mod/plugin notices, explicit maintenance updates and compatible rollovers including World Authority. |
 | [Linux Deployment & Updates](Docs/LinuxDeploymentAndUpdates.md) | systemd install, release assets, and the auto-updater flow. |
 | [Windows Deployment & Updates](Docs/WindowsDeploymentAndUpdates.md) | Scheduled Task install, release assets, and the auto-updater flow. |
+| [Windows Managed Cluster Port](Docs/WindowsManagedClusters.md) | Native Windows work, external runtime prerequisites, two-node CPU placement and remaining acceptance checks. |
 | [State Machine Diagrams](Docs/StateMachines/Index.md) | Object states and state machines (server lifecycle, agent connection, self-update, runtime provisioning, backups, …) as Mermaid + PNG. |
 
 Entity Viewer companion plugins can now discover connected servers through

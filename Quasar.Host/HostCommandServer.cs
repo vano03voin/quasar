@@ -313,8 +313,8 @@ internal sealed class HostCommandServer : IDisposable
         _diagnostics = diagnostics ?? DiagnosticStorage.Create(Path.Combine(config.StateDirectory, "diagnostics"), config.HostId,
             config.DiagnosticsDirectory);
         _deployments = deployments ?? new DeploymentActivation(config.StateDirectory, config.HostId,
-            attachments, gateways, new NodeActualizer(config.StateDirectory, config.HostId, _diagnostics), gatewayActualizer);
-        _snapshots = new(config.StateDirectory, config.HostId, attachments, new NodeActualizer(config.StateDirectory, config.HostId, _diagnostics), gatewayActualizer);
+            attachments, gateways, new NodeActualizer(config.StateDirectory, config.HostId, _diagnostics, config.WindowsNodeAffinities), gatewayActualizer);
+        _snapshots = new(config.StateDirectory, config.HostId, attachments, new NodeActualizer(config.StateDirectory, config.HostId, _diagnostics, config.WindowsNodeAffinities), gatewayActualizer);
         _listener.Prefixes.Add(command.Url.TrimEnd('/') + "/");
     }
 

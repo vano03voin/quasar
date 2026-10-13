@@ -8,16 +8,23 @@ namespace Quasar.Host;
 internal static class DeploymentConfigurationReferences
 {
     private static readonly object Sync = new();
+    private static readonly StringComparer PathComparer = OperatingSystem.IsWindows()
+        ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+    private static readonly StringComparison PathComparison = OperatingSystem.IsWindows()
+        ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+    private static bool IsDescendant(string directory, string root) => directory.StartsWith(
+        Path.TrimEndingDirectorySeparator(root) + Path.DirectorySeparatorChar, PathComparison);
     internal static void Track(string state, string cluster, string directory)
     {
         lock (Sync)
         {
-            string root = Path.Combine(state, "conversions");
+            string root = Path.GetFullPath(Path.Combine(state, "conversions"));
             directory = Path.GetFullPath(directory);
-            if (!directory.StartsWith(root + "/", StringComparison.Ordinal)) return;
+            if (!IsDescendant(directory, root)) return;
             string path = Path.Combine(root, ".configuration-references.json");
             var references = Read(path);
-            if (!references.TryGetValue(cluster, out var paths)) references[cluster] = paths = [];
+            if (!references.TryGetValue(cluster, out var paths)) references[cluster] = paths = new(PathComparer);
             if (paths.Add(directory)) Write(path, references);
         }
     }
@@ -26,25 +33,28 @@ internal static class DeploymentConfigurationReferences
     {
         lock (Sync)
         {
-            string root = Path.Combine(state, "conversions");
-            var keep = retained.Concat(active).Select(Path.GetFullPath).ToHashSet(StringComparer.Ordinal);
+            string root = Path.GetFullPath(Path.Combine(state, "conversions"));
+            var keep = retained.Concat(active).Select(Path.GetFullPath).ToHashSet(PathComparer);
             string path = Path.Combine(root, ".configuration-references.json");
             var references = Read(path);
             if (!references.TryGetValue(cluster, out var paths)) return;
-            foreach (string directory in paths.Except(keep).ToArray())
+            foreach (string directory in paths.Except(keep, PathComparer).ToArray())
             {
-                if (!Path.IsPathFullyQualified(directory) || Path.GetFullPath(directory) != directory
-                    || !directory.StartsWith(root + "/", StringComparison.Ordinal))
+                if (!Path.IsPathFullyQualified(directory) || !PathComparer.Equals(Path.GetFullPath(directory), directory)
+                    || !IsDescendant(directory, root))
                     throw new InvalidDataException("Configuration reference escapes managed storage.");
                 if (Directory.Exists(directory))
                 {
                     ClusterWorldFiles.Private(directory);
                     string manifest = Path.Combine(directory, "bundle.json");
                     var bundle = ExecutionBundle.ReadManifest(manifest, ExecutionBundle.Hash(File.ReadAllBytes(manifest)));
-                    if (bundle.ClusterId != cluster || bundle.RuntimeRoot is null
-                        || bundle.RuntimeRoot == directory || bundle.RuntimeRoot.StartsWith(directory + "/", StringComparison.Ordinal))
+                    if (bundle.ClusterId != cluster || bundle.RuntimeRoot is null || !Path.IsPathFullyQualified(bundle.RuntimeRoot))
                         throw new InvalidDataException("Configuration ownership does not match its reference.");
-                    Directory.Delete(directory, true);
+                    string runtime = Path.GetFullPath(bundle.RuntimeRoot);
+                    if (PathComparer.Equals(Path.TrimEndingDirectorySeparator(runtime), Path.TrimEndingDirectorySeparator(directory))
+                        || IsDescendant(runtime, directory))
+                        throw new InvalidDataException("Configuration contains live runtime storage.");
+                    ClusterContentStore.DeleteTree(directory);
                 }
                 paths.Remove(directory);
             }
@@ -58,8 +68,9 @@ internal static class DeploymentConfigurationReferences
         ClusterWorldFiles.Private(Path.GetDirectoryName(path)!);
         if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
             throw new InvalidDataException("Configuration references cannot be a link.");
-        return JsonSerializer.Deserialize<Dictionary<string, HashSet<string>>>(File.ReadAllBytes(path))
+        var references = JsonSerializer.Deserialize<Dictionary<string, HashSet<string>>>(File.ReadAllBytes(path))
             ?? throw new InvalidDataException("Configuration references are unreadable.");
+        return references.ToDictionary(pair => pair.Key, pair => new HashSet<string>(pair.Value, PathComparer), StringComparer.Ordinal);
     }
     private static void Write(string path, Dictionary<string, HashSet<string>> value)
     {

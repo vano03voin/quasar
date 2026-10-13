@@ -111,7 +111,7 @@ internal static partial class ClusterDeploymentFiles
             token.ThrowIfCancellationRequested();
             Directory.Move(staging, destination); // Atomic and no overwrite, including concurrent preparation.
         }
-        finally { if (Directory.Exists(staging)) Directory.Delete(staging, true); }
+        finally { if (Directory.Exists(staging)) ClusterContentStore.DeleteTree(staging); }
         return new(destination, expectedHash, Path.Combine(destination, "launch-environment.json"));
     }
 

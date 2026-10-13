@@ -93,11 +93,11 @@ public sealed class ClusterWorldConversionTests : IDisposable
     public void ReverseConversionIncludesAllHostsAndSkipsUnusedNodeStores()
     {
         string one = Path.Combine(root, "host-1"), two = Path.Combine(root, "host-2");
-        string regular = Path.Combine(one, "nodes/regular/data/cluster/saves");
-        string wa = Path.Combine(two, "nodes/wa/data/saves");
+        string regular = Path.Combine(one, "nodes", "regular", "data", "cluster", "saves");
+        string wa = Path.Combine(two, "nodes", "wa", "data", "saves");
         Directory.CreateDirectory(Path.Combine(regular, "P-0001"));
         Directory.CreateDirectory(Path.Combine(wa, "GLOBAL"));
-        Directory.CreateDirectory(Path.Combine(two, "nodes/spare/data"));
+        Directory.CreateDirectory(Path.Combine(two, "nodes", "spare", "data"));
         Assert.Equal(new[] { regular, wa }, ClusterConversionService.FindSaveStores([one, two]));
     }
 

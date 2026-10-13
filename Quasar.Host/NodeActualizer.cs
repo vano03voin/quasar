@@ -23,11 +23,14 @@ internal sealed class NodeActualizer
     private readonly string _stateDirectory;
     private readonly string _hostId;
     private readonly DiagnosticCollector _diagnostics;
+    private readonly WindowsNodeAffinity _affinity;
 
-    public NodeActualizer(string stateDirectory, string hostId, DiagnosticCollector? diagnostics = null)
+    public NodeActualizer(string stateDirectory, string hostId, DiagnosticCollector? diagnostics = null,
+        WindowsNodeAffinitySpec[]? windowsNodeAffinities = null)
     {
         _stateDirectory = Path.GetFullPath(stateDirectory);
         _hostId = hostId;
+        _affinity = new WindowsNodeAffinity(windowsNodeAffinities);
         _diagnostics = diagnostics ?? DiagnosticStorage.Create(Path.Combine(_stateDirectory, "diagnostics"), hostId,
             Environment.GetEnvironmentVariable("QUASAR_HOST_DIAGNOSTICS_DIRECTORY"));
     }
@@ -146,6 +149,21 @@ internal sealed class NodeActualizer
         if (record is not null && match.State == ProcessMatchState.Alive)
         {
             using Process process = match.Process!;
+            try
+            {
+                string? appliedMask = _affinity.ApplyOrVerify(process, attachment.ClusterId, plan.SlotKey, record.AppliedCpuMask);
+                if (appliedMask != record.AppliedCpuMask)
+                {
+                    record = record with { AppliedCpuMask = appliedMask };
+                    WriteRecord(record);
+                }
+            }
+            catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception
+                or IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                return Observation(plan.SlotKey, record.AttemptKey, Admin.NodeObservation.Failed,
+                    record.NodeId, "node_affinity_failed:" + exception.Message, record.Epoch ?? 0);
+            }
             if (record.Status == LaunchStatus.Ready)
                 return Observation(plan.SlotKey, record.AttemptKey, Admin.NodeObservation.Ready,
                     record.NodeId, null, record.Epoch ?? 0);
@@ -221,6 +239,7 @@ internal sealed class NodeActualizer
                 throw new InvalidDataException(
                     $"Bundle role {spec.Role} does not match planned role {plan.Role}");
             ValidateSpec(spec, bundle);
+            _affinity.Preflight(attachment.ClusterId, plan.SlotKey);
             int? busyPort = FindBusyPort(spec.ReservedPorts);
             if (busyPort.HasValue)
                 throw new UnmanagedConflictException($"reserved port {busyPort.Value} is already in use");
@@ -261,6 +280,7 @@ internal sealed class NodeActualizer
             if (!process.Start())
                 throw new InvalidOperationException("Process start returned false");
             processStarted = true;
+            record = record with { AppliedCpuMask = _affinity.ApplyOrVerify(process, attachment.ClusterId, plan.SlotKey, null) };
             _diagnostics.Started(diagnosticDirectory, process, ProcessIdentity.Capture(process.Id));
             DateTimeOffset startedAt = process.StartTime.ToUniversalTime();
             record = record with
@@ -777,7 +797,8 @@ internal sealed record LaunchRecord(
     string? Failure,
     string? ProcessIdentity = null,
     string? DiagnosticDirectory = null,
-    long? LaunchedAtUptimeMs = null);
+    long? LaunchedAtUptimeMs = null,
+    string? AppliedCpuMask = null);
 
 internal sealed record RunRootProvenance(int SchemaVersion, string ClusterId, string HostId);
 

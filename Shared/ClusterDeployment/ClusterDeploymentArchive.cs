@@ -12,8 +12,12 @@ internal static partial class ClusterDeploymentFiles
         foreach (string hash in retained)
             if (hash.Length != 64 || hash != hash.ToLowerInvariant() || !hash.All(Uri.IsHexDigit))
                 throw new InvalidDataException("Invalid retained installation hash.");
+        directory = Path.GetFullPath(directory);
         if (!Directory.Exists(directory)) return 0;
-        var protectedRoots = activeRoots.Select(Path.GetFullPath).ToHashSet(StringComparer.Ordinal);
+        var pathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var pathComparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var protectedRoots = activeRoots.Select(root => Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)))
+            .ToHashSet(pathComparer);
         var installations = new List<(string Path, string Hash, ClusterDeploymentInputs Inputs)>();
         foreach (string path in Directory.EnumerateDirectories(directory))
         {
@@ -29,9 +33,12 @@ internal static partial class ClusterDeploymentFiles
         int removed = 0;
         foreach (var (path, hash, inputs) in installations)
         {
-            if (!retained.Contains(hash) && !protectedRoots.Any(root => root == path || root.StartsWith(path + "/", StringComparison.Ordinal)))
+            string installation = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+            string descendantPrefix = installation + Path.DirectorySeparatorChar;
+            if (!retained.Contains(hash) && !protectedRoots.Any(root => pathComparer.Equals(root, installation)
+                    || root.StartsWith(descendantPrefix, pathComparison)))
             {
-                Directory.Delete(path, true);
+                ClusterContentStore.DeleteTree(path);
                 removed++;
             }
             else
@@ -155,6 +162,6 @@ internal static partial class ClusterDeploymentFiles
             Directory.Move(staging, destination);
             return new(destination, expectedHash, Path.Combine(destination, "launch-environment.json"));
         }
-        finally { if (Directory.Exists(staging)) Directory.Delete(staging, true); }
+        finally { if (Directory.Exists(staging)) ClusterContentStore.DeleteTree(staging); }
     }
 }

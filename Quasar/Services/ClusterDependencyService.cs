@@ -32,7 +32,7 @@ public sealed class ClusterDependencyService
                 string hash = Path.GetFileName(path);
                 if (!ClusterPackageService.IsHash(hash, 64)) continue;
                 RefuseLink(path);
-                if (!retained.Contains(hash)) { Directory.Delete(path, true); continue; }
+                if (!retained.Contains(hash)) { ClusterContentStore.DeleteTree(path); continue; }
                 // Migrate old copies in place without changing snapshot identity or paths.
                 byte[] bytes = await File.ReadAllBytesAsync(Path.Combine(path, "manifest.json"), token);
                 if (Hash(bytes) != hash) throw new InvalidDataException("Dependency manifest changed during collection.");
@@ -47,7 +47,7 @@ public sealed class ClusterDependencyService
                 }
             }
             foreach (string path in Directory.EnumerateDirectories(_directory, ".stage-*"))
-            { RefuseLink(path); Directory.Delete(path, true); }
+            { RefuseLink(path); ClusterContentStore.DeleteTree(path); }
         }
         finally { _gate.Release(); }
     }
@@ -132,7 +132,7 @@ public sealed class ClusterDependencyService
         }
         finally
         {
-            try { if (staging is not null) Directory.Delete(staging, true); }
+            try { if (staging is not null) ClusterContentStore.DeleteTree(staging); }
             finally { _gate.Release(); }
         }
     }

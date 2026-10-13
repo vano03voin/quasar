@@ -10,6 +10,38 @@ Linux hard links preserve the existing package directory layout without followin
 links. The objects and references are read-only. Mutable runtime worlds and configuration
 receive independent writable copies; saving a game cannot modify a deployment snapshot.
 
+The content-store primitives also support Windows NTFS on Windows 10 1809 / Server 2019
+or later. They create native hard links, inspect the volume and link count through file
+handles, and keep the executable metadata as a separate object key even though Windows
+does not have a Unix executable bit. Other Windows filesystems are rejected. A different
+volume uses a local store; failure to create a reference never silently substitutes a copy.
+Objects and references carry the shared read-only attribute. Reference deletion uses the
+extended Windows unlink operation, and legacy adoption uses extended atomic rename;
+neither clears read-only on the shared file. Unsupported native operations fail closed.
+The native flags follow Microsoft's
+[extended file disposition](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/ns-ntddk-_file_disposition_information_ex)
+and [file rename](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information)
+contracts.
+Immutable snapshot/staging cleanup must use `ClusterContentStore.DeleteTree`/`DeleteFile`,
+not clear attributes before `Directory.Delete`. Cleanup refuses reparse points. Writable
+world copies clear read-only only after `File.Copy` has created independent files.
+
+This is storage portability, not a Windows managed-cluster release. Package staging,
+dependency provisioning and deployment readiness gates remain unchanged. Windows world
+archive extraction retains its existing independent-copy behavior pending end-to-end
+managed deployment validation. Linux storage calls retain their existing native behavior.
+
+`dotnet run --project Tests/ClusterContentStorage/ClusterContentStorage.csproj -c Release`
+runs native filesystem checks without starting Quasar or a game. An optional directory
+on another NTFS volume exercises cross-volume fallback, for example append `-- D:/`.
+The test creates and removes unique temporary subdirectories only. Coverage includes
+write protection, shared attributes, independent mutable copies, executable keys, atomic
+adoption, object corruption, ownership retention, last-reference pruning and junction
+rejection. Installation collection also protects active descendants using canonical
+native separators and Windows case-insensitive comparisons; sibling-prefix paths do
+not retain an unrelated installation. A Windows 10.0.26200 run on distinct C:/D: NTFS volumes passed these checks;
+this does not substitute for Server 2022 or power-failure acceptance.
+
 Quasar uses `ManagedRuntime/Tools/.objects`; each Host uses
 `state/conversions/.objects`. These are separate distribution endpoints. A different
 filesystem gets a local object store because hard links cannot cross devices. Offline

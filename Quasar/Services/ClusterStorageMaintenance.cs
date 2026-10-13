@@ -130,7 +130,7 @@ public sealed class ClusterStorageMaintenance(ClusterCatalog catalog, ClusterDep
             string name = Path.GetFileName(path);
             if (name.StartsWith('.')) continue;
             ClusterWorldFiles.Private(path);
-            if (!retained.Contains(name)) Directory.Delete(path, true);
+            if (!retained.Contains(name)) ClusterContentStore.DeleteTree(path);
         }
     }
 
@@ -141,7 +141,7 @@ public sealed class ClusterStorageMaintenance(ClusterCatalog catalog, ClusterDep
         if (Directory.Exists(updates))
             foreach (string directory in Directory.EnumerateDirectories(updates))
                 if (Guid.TryParseExact(Path.GetFileName(directory), "N", out _))
-                { ClusterWorldFiles.Private(directory); Directory.Delete(directory, true); }
+                { ClusterWorldFiles.Private(directory); ClusterContentStore.DeleteTree(directory); }
         foreach (var cluster in clusters.Where(c => c.ActiveDeployment is not null))
         {
             string work = Path.Combine(quasar, "ClusterSetup", cluster.UniqueName);

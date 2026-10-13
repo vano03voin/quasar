@@ -155,7 +155,7 @@ public sealed class ClusterUpdatePreparationService(ClusterCatalog catalog, Clus
                 }
                 return result;
             }
-            finally { if (Directory.Exists(work)) Directory.Delete(work, true); }
+            finally { if (Directory.Exists(work)) ClusterContentStore.DeleteTree(work); }
         }, token);
 
     internal static void ValidateQueuedMods(ClusterContentUpdateQueue queued, IReadOnlyList<QuasarModSelection> mods,
@@ -331,7 +331,7 @@ public sealed class ClusterUpdatePreparationService(ClusterCatalog catalog, Clus
         }
         finally
         {
-            if (Directory.Exists(workspace)) Directory.Delete(workspace, recursive: true);
+            if (Directory.Exists(workspace)) ClusterContentStore.DeleteTree(workspace);
         }
     }
 

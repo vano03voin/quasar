@@ -15,7 +15,7 @@ internal static class Program
 {
     internal static readonly DateTimeOffset StartedAt = DateTimeOffset.UtcNow;
     private const string Usage = "Usage: Quasar.Host run --config FILE [--once] | stop-clusters --config FILE | status ..."
-        + " | attachment apply ... | gateway apply ... | deployment prepare --file FILE --sha256 SHA256 --directory DIR | --self-test";
+        + " | attachment apply ... | gateway apply ... | deployment prepare --file FILE --sha256 SHA256 --directory DIR | --self-test | --self-test-affinity";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         Converters = { new JsonStringEnumConverter() },
@@ -25,6 +25,8 @@ internal static class Program
     {
         if (args.SequenceEqual(["--self-test"]))
             return await SelfTestAsync();
+        if (args.SequenceEqual(["--self-test-affinity"]))
+            return await WindowsNodeAffinitySelfTest.RunAsync();
         if (args.Length >= 2 && args[0] == "deployment" && args[1] is "export" or "import")
             return await DeploymentTransfer.RunAsync(args[1], args[2..]);
         if (args.Length >= 2 && args[0] == "deployment" && args[1] == "prepare")
@@ -95,7 +97,7 @@ internal static class Program
         {
             if (!fatal && selfRun is not null) Quasar.Diagnostics.DiagnosticCollector.ExpectExit(selfRun);
         };
-        var actualizer = new NodeActualizer(config.StateDirectory, config.HostId, diagnostics);
+        var actualizer = new NodeActualizer(config.StateDirectory, config.HostId, diagnostics, config.WindowsNodeAffinities);
         var gatewayActualizer = new GatewayActualizer(config.StateDirectory, config.HostId, diagnostics);
         Directory.CreateDirectory(config.StateDirectory);
         Quasar.ClusterDeployment.ClusterContentStore.RootDirectory = Path.Combine(config.StateDirectory, "conversions");
@@ -295,6 +297,7 @@ internal static class Program
 
     private static HostExecutorConfig Normalize(HostExecutorConfig config, string configDirectory)
     {
+        _ = new WindowsNodeAffinity(config.WindowsNodeAffinities);
         string executorId = config.ExecutorId?.Trim() ?? string.Empty;
         string hostId = config.HostId?.Trim() ?? string.Empty;
         if (executorId.Length == 0 || hostId.Length == 0)
@@ -784,6 +787,7 @@ internal sealed record HostExecutorConfig(
     string StateDirectory = "",
     HostCommandConfig? Command = null,
     HostConnectionConfig? Connection = null,
-    string DiagnosticsDirectory = "");
+    string DiagnosticsDirectory = "",
+    WindowsNodeAffinitySpec[]? WindowsNodeAffinities = null);
 
 internal sealed record HostCommandConfig(string Url, string TokenEnvironmentVariable);

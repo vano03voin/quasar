@@ -60,7 +60,7 @@ public sealed class ClusterWorkshopModStager(ManagedDedicatedServerRuntimeResolv
                             JsonSerializer.SerializeToUtf8Bytes(receipt, ClusterDeploymentFiles.JsonOptions), token);
                         Directory.Move(staging, versionPath);
                     }
-                    finally { if (Directory.Exists(staging)) Directory.Delete(staging, true); }
+                    finally { if (Directory.Exists(staging)) ClusterContentStore.DeleteTree(staging); }
                 }
                 foreach (var (name, pin) in receipt.Files)
                     await content.ReferenceAsync(Path.Combine(versionPath, "payload", name), Path.Combine(destination, id + ".sbm", name), pin, token);
